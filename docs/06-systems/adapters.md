@@ -5,7 +5,7 @@
 A space adapter is the bridge between Loom's universal versioning model and a specific content type. Each adapter knows how to:
 
 1. **Detect** — find trackable content in a directory
-2. **Watch** — observe changes (file modifications, Git commits, etc.)
+2. **Watch** — observe changes (file modifications, saves, etc.)
 3. **Normalize** — convert changes into Loom operations
 4. **Diff** — produce meaningful diffs for the content type
 5. **Restore** — write content back from the object store
@@ -114,28 +114,30 @@ func (r *AdapterRegistry) DetectSpaces(projectPath string) []Space {
 
 ## Built-in Adapters
 
-### Code Adapter (Git-Aware)
+### Code Adapter
 
-The code adapter handles source code files. When a Git repository is present, it leverages Git for enhanced state tracking.
+The code adapter handles source code files. It detects projects by looking for common project indicators (build files, manifests) and tracks changes via filesystem events.
 
 ```go
 type CodeAdapter struct {
-    config  SpaceConfig
-    gitRepo *GitRepo // nil if no Git repo
+    config SpaceConfig
 }
 
 func (a *CodeAdapter) ID() string   { return "code" }
 func (a *CodeAdapter) Name() string { return "Code" }
 
 func (a *CodeAdapter) Detect(projectPath string) (bool, error) {
-    // Check for .git directory or common source files
-    if _, err := os.Stat(filepath.Join(projectPath, ".git")); err == nil {
-        return true, nil
-    }
     // Check for common project files
-    indicators := []string{"go.mod", "package.json", "Cargo.toml", "pyproject.toml", "Makefile"}
+    indicators := []string{"go.mod", "package.json", "Cargo.toml", "pyproject.toml", "Makefile", "CMakeLists.txt", "pom.xml"}
     for _, f := range indicators {
         if _, err := os.Stat(filepath.Join(projectPath, f)); err == nil {
+            return true, nil
+        }
+    }
+    // Check for common source directories
+    srcDirs := []string{"src", "lib", "cmd", "pkg"}
+    for _, d := range srcDirs {
+        if info, err := os.Stat(filepath.Join(projectPath, d)); err == nil && info.IsDir() {
             return true, nil
         }
     }
@@ -143,15 +145,7 @@ func (a *CodeAdapter) Detect(projectPath string) (bool, error) {
 }
 
 func (a *CodeAdapter) GetRefs() map[string]string {
-    refs := make(map[string]string)
-    if a.gitRepo != nil {
-        refs["git_head"] = a.gitRepo.HEAD()
-        refs["git_branch"] = a.gitRepo.CurrentBranch()
-        if dirty := a.gitRepo.IsDirty(); dirty {
-            refs["git_dirty"] = "true"
-        }
-    }
-    return refs
+    return make(map[string]string)
 }
 
 func (a *CodeAdapter) NormalizeChange(event FileEvent) ([]Operation, error) {
@@ -207,38 +201,7 @@ func (a *CodeAdapter) Diff(oldContent, newContent []byte, path string) (*DiffOut
 }
 ```
 
-#### Git Integration
-
-When a Git repo is present, the code adapter enriches operations with Git context:
-
-```go
-type GitRepo struct {
-    path string
-}
-
-func (g *GitRepo) HEAD() string {
-    out, _ := exec.Command("git", "-C", g.path, "rev-parse", "HEAD").Output()
-    return strings.TrimSpace(string(out))
-}
-
-func (g *GitRepo) CurrentBranch() string {
-    out, _ := exec.Command("git", "-C", g.path, "rev-parse", "--abbrev-ref", "HEAD").Output()
-    return strings.TrimSpace(string(out))
-}
-
-func (g *GitRepo) IsDirty() bool {
-    out, _ := exec.Command("git", "-C", g.path, "status", "--porcelain").Output()
-    return len(strings.TrimSpace(string(out))) > 0
-}
-
-func (g *GitRepo) DiffStat() (int, int, error) {
-    out, _ := exec.Command("git", "-C", g.path, "diff", "--stat").Output()
-    // Parse insertions/deletions from git diff --stat output
-    return parseGitDiffStat(string(out))
-}
-```
-
-### Docs Adapter (Filesystem)
+### Docs Adapter
 
 Handles documentation files — markdown, text, RST, etc.
 
@@ -502,4 +465,4 @@ Each adapter respects ignore rules from:
 2. Space config `ignore_rules` (per-space)
 3. Adapter-specific defaults (e.g., code adapter ignores `node_modules` by default)
 
-Rules use gitignore syntax.
+Rules use glob/ignore pattern syntax (same as `.gitignore`).

@@ -44,7 +44,7 @@ loom init [path]
 ```
 Initialized Loom in /Users/flakerimi/my-project
 Detected spaces:
-  ✓ code     142 entities (Git repository)
+  ✓ code     142 entities
   ✓ docs      28 entities (docs/)
   ✓ design    15 entities (design/)
 Stream: main
@@ -168,7 +168,6 @@ Tags:       release=v2.0
 Spaces:
   code (changed)
     5 entities modified, +42 -13 lines
-    Refs: git_head=2c5e9d1, git_branch=main
     Entities:
       ✎ src/auth/login.go
       ✎ src/auth/middleware.go
@@ -256,7 +255,7 @@ Restore complete. Guard checkpoint: 01ARZ3NDEM
 
 ### `loom stream`
 
-Manage streams (branches).
+Manage streams.
 
 ```bash
 loom stream <subcommand> [flags]
@@ -277,37 +276,37 @@ loom stream delete <name>        # Delete a stream
 ```
   main            seq 1234  active     2 min ago
 * feature/auth    seq 1250  active     just now
-  fix/login       seq 1200  merged     1 day ago
+  fix/login       seq 1200  woven      1 day ago
 ```
 
 ---
 
-### `loom merge`
+### `loom weave`
 
-Merge a stream into the current stream.
+Weave a stream into the current stream.
 
 ```bash
-loom merge <stream-name> [flags]
+loom weave <stream-name> [flags]
 ```
 
 **Flags:**
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--dry-run` | `false` | Show what would be merged |
-| `--strategy` | `auto+llm` | Merge strategy: auto, llm, ours, theirs |
+| `--dry-run` | `false` | Show what would be woven |
+| `--strategy` | `auto+llm` | Weave strategy: auto, llm, ours, theirs |
 | `--accept-all` | `false` | Accept all LLM suggestions |
 
 **Output:**
 ```
-Merging feature/auth into main...
+Weaving feature/auth into main...
 
-  ✓ 15 entities auto-merged (Tier 1: different entities)
-  ✓ 3 entities auto-merged (Tier 2: non-overlapping changes)
+  ✓ 15 entities auto-woven (Tier 1: different entities)
+  ✓ 3 entities auto-woven (Tier 2: non-overlapping changes)
   ✓ 1 entity resolved by AI (Tier 3: confidence 0.95)
     src/auth/login.go — combined both authentication methods
 
-Merge complete. 19 operations applied.
-Checkpoint: "Merge feature/auth into main"
+Weave complete. 19 operations applied.
+Checkpoint: "Weave feature/auth into main"
 ```
 
 ---
@@ -341,54 +340,54 @@ Watching my-app...
 
 ---
 
-### `loom remote`
+### `loom hub`
 
-Manage remote servers.
+Manage hubs (remote servers).
 
 ```bash
-loom remote <subcommand> [flags]
+loom hub <subcommand> [flags]
 ```
 
 **Subcommands:**
 ```bash
-loom remote add <name> <url>     # Add a remote
-loom remote remove <name>        # Remove a remote
-loom remote list                 # List remotes
-loom remote auth <name>          # Set authentication
-loom remote status               # Show sync status
+loom hub add <name> <url>        # Add a hub
+loom hub remove <name>           # Remove a hub
+loom hub list                    # List hubs
+loom hub auth <name>             # Set authentication
+loom hub status                  # Show sync status
 ```
 
 ---
 
-### `loom push`
+### `loom send`
 
-Push operations to a remote.
+Send operations to a hub.
 
 ```bash
-loom push [remote] [flags]
+loom send [hub] [flags]
 ```
 
 **Flags:**
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--all` | `false` | Push all streams |
-| `--stream` | current | Specific stream to push |
+| `--all` | `false` | Send all streams |
+| `--stream` | current | Specific stream to send |
 
 ---
 
-### `loom pull`
+### `loom receive`
 
-Pull operations from a remote.
+Receive operations from a hub.
 
 ```bash
-loom pull [remote] [flags]
+loom receive [hub] [flags]
 ```
 
 **Flags:**
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--all` | `false` | Pull all streams |
-| `--stream` | current | Specific stream to pull |
+| `--all` | `false` | Receive all streams |
+| `--stream` | current | Specific stream to receive |
 
 ---
 
@@ -484,8 +483,8 @@ loom agent-server [flags]
 | 2 | Not a Loom project (no .loom/) |
 | 3 | Checkpoint not found |
 | 4 | Stream not found |
-| 5 | Merge conflict (Tier 4 — manual needed) |
-| 6 | Remote error (network/auth) |
+| 5 | Weave conflict (Tier 4 — manual needed) |
+| 6 | Hub error (network/auth) |
 | 7 | Lock held by another process |
 
 ## Shell Completion

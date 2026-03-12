@@ -2,14 +2,14 @@
 
 ## Overview
 
-Loom's sync protocol enables pushing and pulling operations between a local project and a remote Loom server. It's operation-based (not snapshot-based), making sync efficient — only new operations and their referenced objects are transferred.
+Loom's sync protocol enables sending and receiving operations between a local project and a hub. It's operation-based (not snapshot-based), making sync efficient — only new operations and their referenced objects are transferred.
 
 ## Architecture
 
 ```
 ┌──────────┐                          ┌──────────────┐
-│  Client   │   ── push ops + objs →  │    Server     │
-│  (.loom/) │   ← pull ops + objs ──  │  (loom-server)│
+│  Client   │   ── send ops + objs →  │    Hub        │
+│  (.loom/) │   ← recv ops + objs ──  │  (loomhub)    │
 │           │                          │               │
 │  SQLite   │   HTTP/JSON protocol    │  SQLite/PG    │
 │  Objects  │                          │  Objects      │
@@ -23,8 +23,8 @@ Loom's sync protocol enables pushing and pulling operations between a local proj
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/api/v1/negotiate` | Find common ancestor, plan sync |
-| POST | `/api/v1/push` | Send operations and objects to server |
-| POST | `/api/v1/pull` | Receive operations and objects from server |
+| POST | `/api/v1/push` | Send operations and objects to hub |
+| POST | `/api/v1/pull` | Receive operations and objects from hub |
 | GET | `/api/v1/project/:id/info` | Get project metadata |
 | GET | `/api/v1/project/:id/streams` | List streams |
 | GET | `/api/v1/project/:id/log` | Get checkpoint log |
@@ -32,7 +32,7 @@ Loom's sync protocol enables pushing and pulling operations between a local proj
 
 ### Negotiate
 
-Before push or pull, client and server negotiate to find the common sync point:
+Before send or receive, client and hub negotiate to find the common sync point:
 
 ```go
 // Client sends
@@ -56,10 +56,10 @@ type NegotiateResponse struct {
 }
 ```
 
-### Push
+### Send (Push)
 
 ```go
-// Client sends operations and referenced objects
+// Client sends operations and referenced objects to hub
 type PushRequest struct {
     ProjectID string      `json:"project_id"`
     StreamID  string      `json:"stream_id"`
@@ -82,10 +82,10 @@ type PushResponse struct {
 }
 ```
 
-### Pull
+### Receive (Pull)
 
 ```go
-// Client sends
+// Client requests operations from hub
 type PullRequest struct {
     ProjectID string `json:"project_id"`
     StreamID  string `json:"stream_id"`
@@ -112,10 +112,10 @@ type SyncClient struct {
     http    *http.Client
 }
 
-func (c *SyncClient) Push(streamName string) error {
+func (c *SyncClient) Send(streamName string) error {
     // 1. Negotiate
     stream, _ := c.getStream(streamName)
-    lastPushed := c.getLastPushedSeq(stream.ID)
+    lastSent := c.getLastSentSeq(stream.ID)
 
     negReq := NegotiateRequest{
         ProjectID: c.projectID(),
@@ -136,7 +136,7 @@ func (c *SyncClient) Push(streamName string) error {
         return nil
     }
 
-    // 2. Get ops to push
+    // 2. Get ops to send
     commonSeq := negResp.CommonSeqs[stream.ID]
     ops, _ := c.reader.ReadRange(commonSeq, stream.HeadSeq)
 
@@ -148,7 +148,7 @@ func (c *SyncClient) Push(streamName string) error {
         objects = append(objects, ObjectData{Hash: hash, Content: content})
     }
 
-    // 4. Push
+    // 4. Send
     pushReq := PushRequest{
         ProjectID:  c.projectID(),
         StreamID:   stream.ID,
@@ -163,20 +163,20 @@ func (c *SyncClient) Push(streamName string) error {
     }
 
     if !pushResp.OK {
-        return fmt.Errorf("push failed: %s", pushResp.Error)
+        return fmt.Errorf("send failed: %s", pushResp.Error)
     }
 
     // 5. Update sync state
-    c.updateLastPushedSeq(stream.ID, stream.HeadSeq)
-    c.logSync(stream.ID, "push", commonSeq, stream.HeadSeq, pushResp.Applied)
+    c.updateLastSentSeq(stream.ID, stream.HeadSeq)
+    c.logSync(stream.ID, "send", commonSeq, stream.HeadSeq, pushResp.Applied)
 
-    fmt.Printf("Pushed %d operations to %s\n", pushResp.Applied, c.remote.Name)
+    fmt.Printf("Sent %d operations to %s\n", pushResp.Applied, c.hub.Name)
     return nil
 }
 
-func (c *SyncClient) Pull(streamName string) error {
+func (c *SyncClient) Receive(streamName string) error {
     stream, _ := c.getStream(streamName)
-    lastPulled := c.getLastPulledSeq(stream.ID)
+    lastReceived := c.getLastReceivedSeq(stream.ID)
 
     // 1. Negotiate
     negResp, _ := c.negotiate(stream)
@@ -186,11 +186,11 @@ func (c *SyncClient) Pull(streamName string) error {
         return nil
     }
 
-    // 2. Pull
+    // 2. Receive
     pullReq := PullRequest{
         ProjectID: c.projectID(),
         StreamID:  stream.ID,
-        FromSeq:   lastPulled,
+        FromSeq:   lastReceived,
     }
 
     pullResp, _ := c.post("/api/v1/pull", pullReq)
@@ -204,27 +204,27 @@ func (c *SyncClient) Pull(streamName string) error {
     c.writer.WriteBatch(pullResp.Operations)
 
     // 5. Update sync state
-    c.updateLastPulledSeq(stream.ID, pullResp.ServerHead)
-    c.logSync(stream.ID, "pull", lastPulled, pullResp.ServerHead, len(pullResp.Operations))
+    c.updateLastReceivedSeq(stream.ID, pullResp.ServerHead)
+    c.logSync(stream.ID, "receive", lastReceived, pullResp.ServerHead, len(pullResp.Operations))
 
-    fmt.Printf("Pulled %d operations from %s\n", len(pullResp.Operations), c.remote.Name)
+    fmt.Printf("Received %d operations from %s\n", len(pullResp.Operations), c.hub.Name)
     return nil
 }
 ```
 
-## Loom Server
+## Hub Server
 
 ### Architecture
 
 ```go
-type Server struct {
-    db     *sql.DB       // Server-side database
-    store  *ObjectStore  // Server-side object store
+type HubServer struct {
+    db     *sql.DB       // Hub database
+    store  *ObjectStore  // Hub object store
     router chi.Router
 }
 
-func NewServer(dbPath, objectsPath string) *Server {
-    s := &Server{
+func NewHubServer(dbPath, objectsPath string) *HubServer {
+    s := &HubServer{
         db:    openDB(dbPath),
         store: NewObjectStore(objectsPath),
     }
@@ -235,8 +235,8 @@ func NewServer(dbPath, objectsPath string) *Server {
     r.Use(s.authMiddleware)
 
     r.Post("/api/v1/negotiate", s.handleNegotiate)
-    r.Post("/api/v1/push", s.handlePush)
-    r.Post("/api/v1/pull", s.handlePull)
+    r.Post("/api/v1/push", s.handleSend)
+    r.Post("/api/v1/pull", s.handleReceive)
     r.Get("/api/v1/project/{id}/info", s.handleProjectInfo)
     r.Get("/api/v1/project/{id}/streams", s.handleListStreams)
     r.Get("/api/v1/project/{id}/log", s.handleLog)
@@ -246,18 +246,18 @@ func NewServer(dbPath, objectsPath string) *Server {
     return s
 }
 
-func (s *Server) Start(addr string) error {
+func (s *HubServer) Start(addr string) error {
     return http.ListenAndServe(addr, s.router)
 }
 ```
 
-### Server Storage
+### Hub Storage
 
-The server uses the same SQLite schema as the client (operations, checkpoints, streams, objects tables). For larger deployments, Postgres can be used instead.
+The hub uses the same SQLite schema as the client (operations, checkpoints, streams, objects tables). For larger deployments, Postgres can be used instead.
 
 ```go
-// Server-side push handler
-func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
+// Hub-side send handler (receives ops from client)
+func (s *HubServer) handleSend(w http.ResponseWriter, r *http.Request) {
     var req PushRequest
     json.NewDecoder(r.Body).Decode(&req)
 
@@ -326,83 +326,53 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 ## CLI Commands
 
 ```bash
-# Add a remote
-loom remote add origin https://loom.example.com/project/my-app
+# Add a hub
+loom hub add origin https://loomhub.dev/flakerimi/my-app
 
 # Set auth token
-loom remote auth origin
+loom hub auth origin
 # Opens browser for OAuth or prompts for token
 
-# Push current stream
-loom push
-loom push origin        # Explicit remote
-loom push --all         # Push all streams
+# Send current stream
+loom send
+loom send origin        # Explicit hub
+loom send --all         # Send all streams
 
-# Pull current stream
-loom pull
-loom pull origin        # Explicit remote
-loom pull --all         # Pull all streams
+# Receive current stream
+loom receive
+loom receive origin     # Explicit hub
+loom receive --all      # Receive all streams
 
-# List remotes
-loom remote list
+# List hubs
+loom hub list
 
-# Remove remote
-loom remote remove origin
+# Remove hub
+loom hub remove origin
 
 # Show sync status
-loom remote status
+loom hub status
 # Output:
-#   origin: https://loom.example.com/project/my-app
+#   origin: https://loomhub.dev/flakerimi/my-app
 #     main: 42 ops ahead, 0 behind
 #     feature/auth: 15 ops ahead, 3 behind
 ```
 
-## Server Deployment
+## Hub Deployment
 
-### Docker
+For hosting your own hub, see the [LoomHub project](../../loomhub/docs/01-vision.md). LoomHub is the reference hub implementation that provides a full hosting platform with web UI, weave requests, and collaboration features.
+
+For a minimal self-hosted hub:
 
 ```dockerfile
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN go build -o loom-server ./cmd/loom-server
+RUN go build -o loomhub ./cmd/loomhub
 
 FROM alpine:3.19
-COPY --from=builder /app/loom-server /usr/local/bin/
-EXPOSE 8080
-CMD ["loom-server", "--addr", ":8080", "--data", "/data"]
-```
-
-### Configuration
-
-```toml
-# loom-server.toml
-[server]
-addr = ":8080"
-data_dir = "/data/loom"
-
-[storage]
-backend = "sqlite"        # or "postgres"
-# postgres_url = "postgres://user:pass@host/loomdb"
-
-[auth]
-method = "jwt"            # or "api_key"
-jwt_secret = "${LOOM_JWT_SECRET}"
-
-[limits]
-max_push_size = 104857600  # 100MB
-max_ops_per_push = 10000
-max_projects = 1000
-```
-
-### Self-hosted
-
-```bash
-# Run server
-loom-server --config loom-server.toml
-
-# Or with docker-compose
-docker-compose up -d
+COPY --from=builder /app/loomhub /usr/local/bin/
+EXPOSE 3000
+CMD ["loomhub", "serve", "--port", "3000", "--data", "/data"]
 ```
 
 ## Future: Real-Time Sync

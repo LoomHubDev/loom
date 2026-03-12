@@ -23,6 +23,9 @@ func NewRootCmd() *cobra.Command {
 		newCheckpointCmd(),
 		newLogCmd(),
 		newStreamCmd(),
+		newHubCmd(),
+		newSendCmd(),
+		newReceiveCmd(),
 	)
 
 	return rootCmd
