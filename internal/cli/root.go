@@ -31,6 +31,7 @@ func NewRootCmd() *cobra.Command {
 		newDiffCmd(),
 		newShowCmd(),
 		newRestoreCmd(),
+		newAgentServerCmd(),
 	)
 
 	return rootCmd
