@@ -7,8 +7,10 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/klauspost/compress v1.18.0
 	github.com/oklog/ulid/v2 v2.1.1
+	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/crypto v0.49.0
 	golang.org/x/term v0.41.0
 	modernc.org/sqlite v1.37.0
 )
