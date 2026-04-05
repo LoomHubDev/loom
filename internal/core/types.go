@@ -162,6 +162,7 @@ type ProjectConfig struct {
 	Spaces  map[string]SpaceConfig `toml:"spaces" json:"spaces"`
 	Watch   WatchConfig            `toml:"watch" json:"watch"`
 	CPoint  CheckpointConfig       `toml:"checkpoint" json:"checkpoint"`
+	Merge   MergeConfig            `toml:"merge" json:"merge"`
 }
 
 type ProjectInfo struct {
@@ -186,10 +187,24 @@ type WatchConfig struct {
 }
 
 type CheckpointConfig struct {
-	Auto              bool `toml:"auto" json:"auto"`
-	IntervalOps       int  `toml:"interval_ops" json:"interval_ops"`
-	IntervalSeconds   int  `toml:"interval_seconds" json:"interval_seconds"`
+	Auto                bool `toml:"auto" json:"auto"`
+	IntervalOps         int  `toml:"interval_ops" json:"interval_ops"`
+	IntervalSeconds     int  `toml:"interval_seconds" json:"interval_seconds"`
 	OnSignificantChange bool `toml:"on_significant_change" json:"on_significant_change"`
+}
+
+type MergeConfig struct {
+	DefaultStrategy string            `toml:"default_strategy" json:"default_strategy"`
+	Strategies      map[string]string `toml:"strategies" json:"strategies"`
+	LLM             LLMMergeConfig    `toml:"llm" json:"llm"`
+}
+
+type LLMMergeConfig struct {
+	Enabled            bool    `toml:"enabled" json:"enabled"`
+	Endpoint           string  `toml:"endpoint" json:"endpoint"`
+	Model              string  `toml:"model" json:"model"`
+	AutoApplyThreshold float64 `toml:"auto_apply_threshold" json:"auto_apply_threshold"`
+	MaxFileSize        int64   `toml:"max_file_size" json:"max_file_size"`
 }
 
 // --- Helpers ---

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/constructspace/loom/internal/core"
 	lsync "github.com/constructspace/loom/internal/sync"
@@ -25,6 +26,7 @@ func newHubCmd() *cobra.Command {
 		newHubRemoveCmd(),
 		newHubListCmd(),
 		newHubAuthCmd(),
+		newHubStatusCmd(),
 	)
 
 	return cmd
@@ -188,5 +190,96 @@ func newHubAuthCmd() *cobra.Command {
 			fmt.Printf("Authenticated as %s\n", username)
 			return nil
 		},
+	}
+}
+
+func newHubStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status [remote]",
+		Short: "Show sync status for hub remotes",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			v, err := core.OpenVault(projectDir)
+			if err != nil {
+				return err
+			}
+			defer v.Close()
+
+			remotes := core.NewRemoteStore(v.DB)
+
+			var list []core.Remote
+			if len(args) > 0 {
+				r, err := remotes.Get(args[0])
+				if err != nil {
+					return err
+				}
+				list = []core.Remote{*r}
+			} else {
+				list, err = remotes.List()
+				if err != nil {
+					return err
+				}
+			}
+
+			out := cmd.OutOrStdout()
+
+			if len(list) == 0 {
+				fmt.Fprintln(out, "No remotes configured.")
+				return nil
+			}
+
+			streams, err := v.Streams.List()
+			if err != nil {
+				return fmt.Errorf("list streams: %w", err)
+			}
+
+			for _, r := range list {
+				fmt.Fprintf(out, "%s: %s\n", r.Name, r.URL)
+				for _, s := range streams {
+					pushSeq, _ := remotes.GetStreamPushSeq(r.Name, s.ID)
+					pullSeq, _ := remotes.GetStreamPullSeq(r.Name, s.ID)
+					ahead := s.HeadSeq - pushSeq
+					behind := pullSeq
+
+					lastPushStr := "never"
+					if r.LastPush != "" {
+						if t, err := time.Parse("2006-01-02 15:04:05", r.LastPush); err == nil {
+							lastPushStr = formatAgo(time.Since(t))
+						} else if t, err := time.Parse(time.RFC3339, r.LastPush); err == nil {
+							lastPushStr = formatAgo(time.Since(t))
+						}
+					}
+
+					fmt.Fprintf(out, "  %-10s %d ahead, %d behind (last push: %s)\n",
+						s.Name+":", ahead, behind, lastPushStr)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func formatAgo(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		mins := int(d.Minutes())
+		if mins == 1 {
+			return "1 minute ago"
+		}
+		return fmt.Sprintf("%d minutes ago", mins)
+	case d < 24*time.Hour:
+		hrs := int(d.Hours())
+		if hrs == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hrs)
+	default:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
 	}
 }

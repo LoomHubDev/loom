@@ -207,3 +207,16 @@ func TestStructuredMerge_DeleteKey(t *testing.T) {
 	_, hasB := merged["b"]
 	assert.False(t, hasB, "key 'b' should be deleted")
 }
+
+func TestPolicyFromConfig(t *testing.T) {
+	p := PolicyFromConfig("auto+llm", map[string]string{"config": "ours", "notes": "auto"})
+	assert.Equal(t, StrategyAutoLLM, p.Default)
+	assert.Equal(t, StrategyOurs, p.StrategyFor("config"))
+	assert.Equal(t, StrategyAuto, p.StrategyFor("notes"))
+	assert.Equal(t, StrategyAutoLLM, p.StrategyFor("code")) // falls back to default
+}
+
+func TestPolicyFromConfig_EmptyDefault(t *testing.T) {
+	p := PolicyFromConfig("", nil)
+	assert.Equal(t, StrategyAuto, p.Default)
+}

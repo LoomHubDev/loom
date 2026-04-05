@@ -31,3 +31,18 @@ func (p *Policy) StrategyFor(spaceID string) Strategy {
 	}
 	return p.Default
 }
+
+// PolicyFromConfig creates a Policy from core config values.
+func PolicyFromConfig(defaultStrategy string, strategies map[string]string) *Policy {
+	p := &Policy{
+		Default:         Strategy(defaultStrategy),
+		SpaceStrategies: make(map[string]Strategy),
+	}
+	if p.Default == "" {
+		p.Default = StrategyAuto
+	}
+	for space, strat := range strategies {
+		p.SpaceStrategies[space] = Strategy(strat)
+	}
+	return p
+}
