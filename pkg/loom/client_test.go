@@ -202,3 +202,53 @@ func TestClient_OpenNonexistent(t *testing.T) {
 	_, err := Open("/nonexistent/path/to/project")
 	assert.Error(t, err)
 }
+
+func TestClient_RecordChange(t *testing.T) {
+	client, _ := setupTestClient(t)
+
+	content := []byte("package main\nfunc recorded() {}\n")
+	err := client.RecordChange("code", "recorded.go", content)
+	require.NoError(t, err)
+
+	// Verify the op was written by diffing from 0 to HEAD.
+	result, err := client.Diff("0", "HEAD")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	found := false
+	for _, space := range result.Spaces {
+		for _, e := range space.Entities {
+			if e.Path == "recorded.go" {
+				found = true
+			}
+		}
+	}
+	assert.True(t, found, "expected recorded.go in diff result")
+}
+
+func TestClient_Explain(t *testing.T) {
+	client, _ := setupTestClient(t)
+
+	// Write an op via the vault directly (same package access).
+	stream, err := client.vault.ActiveStream()
+	require.NoError(t, err)
+
+	hash, err := client.vault.Store.Write([]byte("package main\n"), "text/x-go")
+	require.NoError(t, err)
+
+	_, err = client.vault.OpWriter.Write(core.Operation{
+		StreamID:  stream.ID,
+		SpaceID:   "code",
+		EntityID:  "explain_test.go",
+		Type:      core.OpCreate,
+		Path:      "explain_test.go",
+		ObjectRef: hash,
+		Author:    "test",
+	})
+	require.NoError(t, err)
+
+	explanation, err := client.Explain("0", "HEAD")
+	require.NoError(t, err)
+	assert.NotEmpty(t, explanation)
+	assert.NotEqual(t, "No changes detected.", explanation)
+}

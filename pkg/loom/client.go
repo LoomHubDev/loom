@@ -193,3 +193,121 @@ func WithAuthor(author string) CheckpointOption {
 		input.Author = author
 	}
 }
+
+// RecordChange records a file change made by an agent.
+func (c *Client) RecordChange(spaceID, path string, content []byte) error {
+	stream, err := c.vault.ActiveStream()
+	if err != nil {
+		return err
+	}
+	hash, err := c.vault.Store.Write(content, "")
+	if err != nil {
+		return fmt.Errorf("store content: %w", err)
+	}
+	_, err = c.vault.OpWriter.Write(core.Operation{
+		StreamID:  stream.ID,
+		SpaceID:   spaceID,
+		EntityID:  path,
+		Type:      core.OpModify,
+		Path:      path,
+		ObjectRef: hash,
+		Author:    "agent",
+		Meta: core.OpMeta{
+			Size:   int64(len(content)),
+			Source: "agent",
+		},
+	})
+	return err
+}
+
+// Explain returns a human-readable summary of changes between two refs.
+func (c *Client) Explain(from, to string) (string, error) {
+	result, err := c.Diff(from, to)
+	if err != nil {
+		return "", err
+	}
+	return buildExplanation(result), nil
+}
+
+// buildExplanation builds a natural language summary from a DiffResult.
+func buildExplanation(result *diff.DiffResult) string {
+	if len(result.Spaces) == 0 {
+		return "No changes detected."
+	}
+
+	var parts []string
+	for _, space := range result.Spaces {
+		if len(space.Entities) == 0 {
+			continue
+		}
+
+		created := make([]string, 0)
+		modified := make([]string, 0)
+		deleted := make([]string, 0)
+
+		for _, e := range space.Entities {
+			switch e.Change {
+			case core.ChangeCreated:
+				created = append(created, e.Path)
+			case core.ChangeModified:
+				modified = append(modified, e.Path)
+			case core.ChangeDeleted:
+				deleted = append(deleted, e.Path)
+			}
+		}
+
+		var spaceParts []string
+		if len(created) > 0 {
+			noun := "file"
+			if len(created) > 1 {
+				noun = "files"
+			}
+			spaceParts = append(spaceParts, fmt.Sprintf("%d %s created in %s space: %s",
+				len(created), noun, space.SpaceID, joinPaths(created)))
+		}
+		if len(modified) > 0 {
+			noun := "file"
+			if len(modified) > 1 {
+				noun = "files"
+			}
+			spaceParts = append(spaceParts, fmt.Sprintf("%d %s modified in %s space: %s",
+				len(modified), noun, space.SpaceID, joinPaths(modified)))
+		}
+		if len(deleted) > 0 {
+			noun := "file"
+			if len(deleted) > 1 {
+				noun = "files"
+			}
+			spaceParts = append(spaceParts, fmt.Sprintf("%d %s deleted in %s space: %s",
+				len(deleted), noun, space.SpaceID, joinPaths(deleted)))
+		}
+		parts = append(parts, spaceParts...)
+	}
+
+	if len(parts) == 0 {
+		return "No changes detected."
+	}
+
+	out := ""
+	for i, p := range parts {
+		if i == 0 {
+			out = p
+		} else {
+			out += ". " + p
+		}
+	}
+	out += "."
+	return out
+}
+
+// joinPaths joins file paths with commas.
+func joinPaths(paths []string) string {
+	result := ""
+	for i, p := range paths {
+		if i > 0 {
+			result += ", "
+		}
+		result += p
+	}
+	return result
+}

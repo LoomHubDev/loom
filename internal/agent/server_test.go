@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -169,4 +170,70 @@ func TestAgentServer_CheckpointMissingTitle(t *testing.T) {
 	var result map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	assert.Contains(t, result, "error")
+}
+
+func TestAgentServer_Record(t *testing.T) {
+	_, ts := setupAgentTest(t)
+
+	content := []byte("package main\nfunc added() {}\n")
+	encoded := base64.StdEncoding.EncodeToString(content)
+
+	payload := map[string]string{
+		"space_id": "code",
+		"path":     "src/main.go",
+		"content":  encoded,
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(ts.URL+"/api/v1/record", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Equal(t, true, result["ok"])
+}
+
+func TestAgentServer_Explain(t *testing.T) {
+	client, ts := setupAgentTest(t)
+
+	// Record a change so there is something to explain.
+	err := client.RecordChange("code", "main.go", []byte("package main\n"))
+	require.NoError(t, err)
+
+	payload := map[string]string{"from": "0", "to": "HEAD"}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post(ts.URL+"/api/v1/explain", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	assert.Contains(t, result, "explanation")
+	assert.NotEmpty(t, result["explanation"])
+}
+
+func TestAgentServer_Tools(t *testing.T) {
+	_, ts := setupAgentTest(t)
+
+	resp, err := http.Get(ts.URL + "/api/v1/tools")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var tools []map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&tools))
+	assert.NotEmpty(t, tools)
+
+	// Verify it's a proper array with named tools.
+	for _, tool := range tools {
+		assert.Contains(t, tool, "name")
+		assert.Contains(t, tool, "description")
+	}
 }

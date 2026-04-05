@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -40,6 +41,9 @@ func NewAgentServer(client *loom.Client, port int) *AgentServer {
 	mux.HandleFunc("GET /api/v1/log", s.handleLog)
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 	mux.HandleFunc("GET /api/v1/search", s.handleSearch)
+	mux.HandleFunc("POST /api/v1/record", s.handleRecord)
+	mux.HandleFunc("POST /api/v1/explain", s.handleExplain)
+	mux.HandleFunc("GET /api/v1/tools", s.handleTools)
 
 	return s
 }
@@ -236,4 +240,105 @@ func (s *AgentServer) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+type recordRequest struct {
+	SpaceID string `json:"space_id"`
+	Path    string `json:"path"`
+	Content string `json:"content"` // base64-encoded
+}
+
+func (s *AgentServer) handleRecord(w http.ResponseWriter, r *http.Request) {
+	var req recordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.SpaceID == "" {
+		writeError(w, http.StatusBadRequest, "space_id is required")
+		return
+	}
+	if req.Path == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+
+	content, err := base64.StdEncoding.DecodeString(req.Content)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "content must be valid base64")
+		return
+	}
+
+	if err := s.client.RecordChange(req.SpaceID, req.Path, content); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+type explainRequest struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+type explainResponse struct {
+	Explanation      string   `json:"explanation"`
+	SpacesAffected   []string `json:"spaces_affected"`
+	EntitiesAffected []string `json:"entities_affected"`
+}
+
+func (s *AgentServer) handleExplain(w http.ResponseWriter, r *http.Request) {
+	var req explainRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.From == "" {
+		req.From = "HEAD~1"
+	}
+	if req.To == "" {
+		req.To = "HEAD"
+	}
+
+	explanation, err := s.client.Explain(req.From, req.To)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	// Also collect spaces and entities for structured output.
+	result, err := s.client.Diff(req.From, req.To)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	spacesSet := make(map[string]struct{})
+	var entities []string
+	for _, space := range result.Spaces {
+		spacesSet[space.SpaceID] = struct{}{}
+		for _, e := range space.Entities {
+			entities = append(entities, e.Path)
+		}
+	}
+	spaces := make([]string, 0, len(spacesSet))
+	for k := range spacesSet {
+		spaces = append(spaces, k)
+	}
+
+	writeJSON(w, http.StatusOK, explainResponse{
+		Explanation:      explanation,
+		SpacesAffected:   spaces,
+		EntitiesAffected: entities,
+	})
+}
+
+func (s *AgentServer) handleTools(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(ToolDefinitions())
 }
