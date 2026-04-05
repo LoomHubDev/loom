@@ -4,9 +4,10 @@ package merge
 type Strategy string
 
 const (
-	StrategyAuto   Strategy = "auto"   // try auto-merge, fail on conflicts
-	StrategyOurs   Strategy = "ours"   // keep our version on conflict
-	StrategyTheirs Strategy = "theirs" // keep their version on conflict
+	StrategyAuto    Strategy = "auto"     // try auto-merge, fail on conflicts
+	StrategyOurs    Strategy = "ours"     // keep our version on conflict
+	StrategyTheirs  Strategy = "theirs"   // keep their version on conflict
+	StrategyAutoLLM Strategy = "auto+llm" // try auto, then LLM on conflict
 )
 
 // Policy controls merge behavior per-space.

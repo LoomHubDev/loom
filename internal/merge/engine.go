@@ -10,11 +10,22 @@ import (
 // MergeEngine performs content-level merges using the object store.
 type MergeEngine struct {
 	store *storage.ObjectStore
+	llm   *LLMMerger // optional LLM-based conflict resolver (Tier 3)
 }
 
 // NewMergeEngine creates a MergeEngine backed by the given object store.
 func NewMergeEngine(store *storage.ObjectStore) *MergeEngine {
 	return &MergeEngine{store: store}
+}
+
+// NewMergeEngineWithLLM creates a MergeEngine with LLM-assisted conflict resolution.
+// When conventional merge produces conflicts, the engine will attempt LLM resolution
+// before reporting failure.
+func NewMergeEngineWithLLM(store *storage.ObjectStore, llmConfig LLMConfig) *MergeEngine {
+	return &MergeEngine{
+		store: store,
+		llm:   NewLLMMerger(llmConfig),
+	}
 }
 
 // MergeEntity reads base, ours, and theirs from the object store and merges them.
@@ -43,6 +54,39 @@ func MergeEntityContent(base, ours, theirs []byte) *MergeResult {
 		return StructuredMerge(base, ours, theirs)
 	}
 	return ThreeWayMerge(base, ours, theirs)
+}
+
+// ResolveConflicts attempts to resolve merge conflicts using the LLM if available.
+// When the LLM is configured and the confidence meets the auto-apply threshold,
+// the returned MergeResult will have OK=true. If the LLM provides a result with
+// lower confidence, OK remains false but Content is set to the LLM suggestion.
+// If the LLM is not configured or fails, the original conflict result is returned.
+func (e *MergeEngine) ResolveConflicts(entityID string, base, ours, theirs []byte, result *MergeResult) *MergeResult {
+	if e.llm == nil {
+		return result
+	}
+	if result.OK || len(result.Conflicts) == 0 {
+		return result
+	}
+
+	llmResult, err := e.llm.Resolve(entityID, base, ours, theirs, result.Conflicts)
+	if err != nil {
+		// LLM failed; return the original conflict result.
+		return result
+	}
+
+	merged := &MergeResult{
+		Content:   []byte(llmResult.Content),
+		Conflicts: result.Conflicts,
+	}
+
+	if llmResult.Confidence >= e.llm.config.AutoApplyThreshold {
+		merged.OK = true
+		merged.Conflicts = nil
+	}
+	// If confidence is below threshold, OK stays false — caller can inspect the suggestion.
+
+	return merged
 }
 
 // readRef reads content from the object store. Empty ref returns empty content.
