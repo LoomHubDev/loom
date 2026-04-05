@@ -32,6 +32,10 @@ func NewRootCmd() *cobra.Command {
 		newShowCmd(),
 		newRestoreCmd(),
 		newAgentServerCmd(),
+		newDoctorCmd(),
+		newExportCmd(),
+		newImportCmd(),
+		newCompactCmd(),
 	)
 
 	return rootCmd
