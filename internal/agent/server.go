@@ -20,6 +20,7 @@ type AgentServer struct {
 	client *loom.Client
 	server *http.Server
 	mux    *http.ServeMux
+	events *EventBus
 }
 
 // NewAgentServer creates a new agent HTTP server bound to the given port.
@@ -29,6 +30,7 @@ func NewAgentServer(client *loom.Client, port int) *AgentServer {
 	s := &AgentServer{
 		client: client,
 		mux:    mux,
+		events: NewEventBus(),
 		server: &http.Server{
 			Addr:    fmt.Sprintf(":%d", port),
 			Handler: jsonMiddleware(mux),
@@ -44,6 +46,7 @@ func NewAgentServer(client *loom.Client, port int) *AgentServer {
 	mux.HandleFunc("POST /api/v1/record", s.handleRecord)
 	mux.HandleFunc("POST /api/v1/explain", s.handleExplain)
 	mux.HandleFunc("GET /api/v1/tools", s.handleTools)
+	mux.HandleFunc("GET /api/v1/events", handleSSE(s.events))
 
 	return s
 }
@@ -89,6 +92,11 @@ func (s *AgentServer) StartWithSignals() error {
 // Stop gracefully shuts down the server.
 func (s *AgentServer) Stop() error {
 	return s.server.Shutdown(context.Background())
+}
+
+// Events returns the EventBus so external code can publish events.
+func (s *AgentServer) Events() *EventBus {
+	return s.events
 }
 
 // jsonMiddleware sets the Content-Type header to application/json for all responses.
@@ -144,6 +152,7 @@ func (s *AgentServer) handleCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.events.Publish(Event{Type: "checkpoint", Data: cp})
 	writeJSON(w, http.StatusOK, cp)
 }
 
@@ -180,6 +189,7 @@ func (s *AgentServer) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.events.Publish(Event{Type: "restore", Data: map[string]string{"checkpoint_id": req.CheckpointID}})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -277,6 +287,7 @@ func (s *AgentServer) handleRecord(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.events.Publish(Event{Type: "operation", Data: map[string]string{"space_id": req.SpaceID, "path": req.Path}})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
