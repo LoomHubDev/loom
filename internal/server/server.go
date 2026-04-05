@@ -39,6 +39,11 @@ func NewHubServer(dataDir string) (*HubServer, error) {
 	return s, nil
 }
 
+// Users returns the UserStore for this server.
+func (s *HubServer) Users() *UserStore {
+	return s.users
+}
+
 // Handler returns the HTTP handler for the hub server.
 func (s *HubServer) Handler() http.Handler {
 	return s.mux
