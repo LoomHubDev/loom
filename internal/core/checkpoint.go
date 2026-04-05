@@ -149,7 +149,15 @@ func (ce *CheckpointEngine) ListAll(limit int) ([]Checkpoint, error) {
 }
 
 // Search performs full-text search on checkpoint titles and summaries.
-func (ce *CheckpointEngine) Search(query string) ([]Checkpoint, error) {
+func (ce *CheckpointEngine) Search(query string, limits ...int) ([]Checkpoint, error) {
+	limit := -1
+	if len(limits) > 0 {
+		limit = limits[0]
+		if limit <= 0 {
+			limit = -1
+		}
+	}
+
 	rows, err := ce.db.Query(`
 		SELECT c.id, c.stream_id, c.seq, c.title, c.summary, c.author, c.timestamp, c.source, c.spaces, c.tags, c.parent_id
 		FROM checkpoints c
@@ -163,7 +171,20 @@ func (ce *CheckpointEngine) Search(query string) ([]Checkpoint, error) {
 	}
 	defer rows.Close()
 
-	return scanCheckpoints(rows)
+	checkpoints, err := scanCheckpoints(rows)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && len(checkpoints) > limit {
+		checkpoints = checkpoints[:limit]
+	}
+	return checkpoints, nil
+}
+
+// CountSinceCheckpoint returns operation counts per space since the latest checkpoint.
+func (ce *CheckpointEngine) CountSinceCheckpoint(streamID string) (map[string]*SpaceOpCounts, error) {
+	lastSeq := ce.LatestSeq(streamID)
+	return ce.reader.CountBySpace(streamID, lastSeq)
 }
 
 // LatestSeq returns the sequence number of the latest checkpoint for a stream.
