@@ -183,3 +183,19 @@ func (sm *StreamManager) ActiveName() (string, error) {
 	}
 	return name, nil
 }
+
+// SetStatus updates a stream status by id.
+func (sm *StreamManager) SetStatus(id, status string) error {
+	res, err := sm.db.Exec("UPDATE streams SET status = ?, updated_at = ? WHERE id = ?", status, Now(), id)
+	if err != nil {
+		return fmt.Errorf("set stream status: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set stream status: rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrStreamNotFound
+	}
+	return nil
+}

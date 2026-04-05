@@ -29,7 +29,11 @@ func newLogCmd() *cobra.Command {
 			var checkpoints []core.Checkpoint
 
 			if search != "" {
-				checkpoints, err = vault.Checkpoints.Search(search)
+				searchLimit := 0
+				if source == "" && space == "" {
+					searchLimit = limit
+				}
+				checkpoints, err = vault.Checkpoints.Search(search, searchLimit)
 			} else {
 				stream, serr := vault.ActiveStream()
 				if serr != nil {
@@ -46,6 +50,7 @@ func newLogCmd() *cobra.Command {
 				return nil
 			}
 
+			rendered := 0
 			for _, cp := range checkpoints {
 				// Filter by source
 				if source != "" && string(cp.Source) != source {
@@ -102,6 +107,10 @@ func newLogCmd() *cobra.Command {
 				}
 
 				fmt.Fprintln(cmd.OutOrStdout())
+				rendered++
+				if rendered >= limit {
+					break
+				}
 			}
 
 			return nil

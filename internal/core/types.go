@@ -66,6 +66,7 @@ const (
 	SourceWorkflow CheckpointSource = "workflow"
 	SourceGuard    CheckpointSource = "guard"
 	SourceRestore  CheckpointSource = "restore"
+	SourceWeave    CheckpointSource = "weave"
 )
 
 type Checkpoint struct {

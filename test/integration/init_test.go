@@ -143,6 +143,48 @@ func TestFullWorkflow_InitCheckpointModifyCheckpoint(t *testing.T) {
 	vault.Close()
 }
 
+func TestCLI_LogSearchRespectsLimit(t *testing.T) {
+	dir := t.TempDir()
+
+	vault, err := core.InitVault(dir)
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	defer vault.Close()
+
+	stream, err := vault.ActiveStream()
+	if err != nil {
+		t.Fatalf("active stream: %v", err)
+	}
+
+	for i := 1; i <= 3; i++ {
+		if _, err := vault.Checkpoints.Create(core.CheckpointInput{
+			StreamID: stream.ID,
+			Title:    "searchable checkpoint",
+			Summary:  "match",
+			Author:   "test",
+			Source:   core.SourceManual,
+		}); err != nil {
+			t.Fatalf("checkpoint %d: %v", i, err)
+		}
+		if _, err := vault.OpWriter.Write(core.Operation{
+			StreamID: stream.ID,
+			SpaceID:  "code",
+			EntityID: "file.txt",
+			Type:     core.OpModify,
+			Path:     "file.txt",
+			Author:   "test",
+		}); err != nil {
+			t.Fatalf("write op %d: %v", i, err)
+		}
+	}
+
+	out := runCLI(t, "-p", dir, "log", "--search", "searchable", "-n", "2")
+	if strings.Count(out, "searchable checkpoint") != 2 {
+		t.Fatalf("expected 2 matching checkpoints, got output:\n%s", out)
+	}
+}
+
 func runCLI(t *testing.T, args ...string) string {
 	t.Helper()
 	var buf bytes.Buffer

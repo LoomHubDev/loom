@@ -3,11 +3,15 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/constructspace/loom/internal/core"
 	lsync "github.com/constructspace/loom/internal/sync"
 	"github.com/spf13/cobra"
 )
+
+const defaultSendBatchSize = 256
 
 func newSendCmd() *cobra.Command {
 	return &cobra.Command{
@@ -47,13 +51,14 @@ func newSendCmd() *cobra.Command {
 				return fmt.Errorf("get active stream: %w", err)
 			}
 
-			// Get local head
-			localHead, err := v.OpReader.Head()
+			localHead := stream.HeadSeq
+
+			pushSeq, err := remotes.GetStreamPushSeq(remote.Name, stream.ID)
 			if err != nil {
-				return fmt.Errorf("read local head: %w", err)
+				return fmt.Errorf("read stream push seq: %w", err)
 			}
 
-			if localHead <= remote.PushSeq {
+			if localHead <= pushSeq {
 				fmt.Println("Everything up to date.")
 				return nil
 			}
@@ -80,8 +85,18 @@ func newSendCmd() *cobra.Command {
 			}
 
 			// Determine what to send
-			fromSeq := remote.PushSeq
-			if commonSeq, ok := negResp.CommonSeqs[stream.ID]; ok && commonSeq > fromSeq {
+			fromSeq := pushSeq
+			if fromSeq == 0 {
+				if commonSeq, ok := negResp.CommonSeqs[stream.ID]; ok && commonSeq > fromSeq {
+					fromSeq = commonSeq
+				}
+			}
+
+			if fromSeq > localHead {
+				fromSeq = localHead
+			}
+
+			if commonSeq, ok := negResp.CommonSeqs[stream.ID]; ok && commonSeq < fromSeq {
 				fromSeq = commonSeq
 			}
 
@@ -96,70 +111,99 @@ func newSendCmd() *cobra.Command {
 				return nil
 			}
 
-			// Convert to wire format and collect object refs
-			wireOps := make([]lsync.OperationWire, len(ops))
-			objectRefs := make(map[string]bool)
-			for i, op := range ops {
-				metaJSON, _ := json.Marshal(op.Meta)
-				wireOps[i] = lsync.OperationWire{
-					ID:        op.ID,
-					Seq:       op.Seq,
-					StreamID:  op.StreamID,
-					SpaceID:   op.SpaceID,
-					EntityID:  op.EntityID,
-					Type:      string(op.Type),
-					Path:      op.Path,
-					ObjectRef: op.ObjectRef,
-					ParentSeq: op.ParentSeq,
-					Author:    op.Author,
-					Timestamp: op.Timestamp,
-					Meta:      json.RawMessage(metaJSON),
-				}
-				if op.Delta != nil {
-					wireOps[i].Delta = json.RawMessage(op.Delta)
-				}
-				if op.ObjectRef != "" {
-					objectRefs[op.ObjectRef] = true
-				}
-			}
+			batchSize := configuredSendBatchSize()
+			fmt.Printf("Sending %d operations in batches of %d...\n", len(ops), batchSize)
 
-			// Read objects to send
-			var objects []lsync.ObjectData
-			for hash := range objectRefs {
-				content, err := v.Store.Read(hash)
-				if err != nil {
-					return fmt.Errorf("read object %s: %w", hash[:12], err)
+			sentObjects := make(map[string]bool)
+			totalApplied := 0
+			serverHead := fromSeq
+
+			for start := 0; start < len(ops); start += batchSize {
+				end := start + batchSize
+				if end > len(ops) {
+					end = len(ops)
 				}
-				objects = append(objects, lsync.ObjectData{
-					Hash:    hash,
-					Content: content,
+
+				batch := ops[start:end]
+				wireOps := make([]lsync.OperationWire, len(batch))
+				objectRefs := make(map[string]bool)
+
+				for i, op := range batch {
+					metaJSON, _ := json.Marshal(op.Meta)
+					wireOps[i] = lsync.OperationWire{
+						ID:        op.ID,
+						Seq:       op.Seq,
+						StreamID:  op.StreamID,
+						SpaceID:   op.SpaceID,
+						EntityID:  op.EntityID,
+						Type:      string(op.Type),
+						Path:      op.Path,
+						ObjectRef: op.ObjectRef,
+						ParentSeq: op.ParentSeq,
+						Author:    op.Author,
+						Timestamp: op.Timestamp,
+						Meta:      json.RawMessage(metaJSON),
+					}
+					if op.Delta != nil {
+						wireOps[i].Delta = json.RawMessage(op.Delta)
+					}
+					if op.ObjectRef != "" && !sentObjects[op.ObjectRef] {
+						objectRefs[op.ObjectRef] = true
+					}
+				}
+
+				var objects []lsync.ObjectData
+				for hash := range objectRefs {
+					content, err := v.Store.Read(hash)
+					if err != nil {
+						return fmt.Errorf("read object %s: %w", hash[:12], err)
+					}
+					objects = append(objects, lsync.ObjectData{
+						Hash:    hash,
+						Content: content,
+					})
+					sentObjects[hash] = true
+				}
+
+				batchFromSeq := fromSeq
+				if start > 0 {
+					batchFromSeq = ops[start-1].Seq
+				}
+
+				pushResp, err := client.Push(&lsync.PushRequest{
+					ProjectID:  v.Config.Project.Name,
+					StreamID:   stream.ID,
+					FromSeq:    batchFromSeq,
+					Operations: wireOps,
+					Objects:    objects,
 				})
-			}
+				if err != nil {
+					return err
+				}
+				if !pushResp.OK {
+					return fmt.Errorf("push rejected: %s", pushResp.Error)
+				}
 
-			// Push
-			fmt.Printf("Sending %d operations, %d objects...\n", len(wireOps), len(objects))
-			pushResp, err := client.Push(&lsync.PushRequest{
-				ProjectID:  v.Config.Project.Name,
-				StreamID:   stream.ID,
-				FromSeq:    fromSeq,
-				Operations: wireOps,
-				Objects:    objects,
-			})
-			if err != nil {
-				return err
-			}
-
-			if !pushResp.OK {
-				return fmt.Errorf("push rejected: %s", pushResp.Error)
+				totalApplied += pushResp.Applied
+				serverHead = pushResp.ServerHead
 			}
 
 			// Update local push_seq
-			if err := remotes.UpdatePushSeq(remote.Name, localHead); err != nil {
+			if err := remotes.UpdateStreamPushSeq(remote.Name, stream.ID, localHead); err != nil {
 				return fmt.Errorf("update push seq: %w", err)
 			}
 
-			fmt.Printf("Sent %d operations to %s (server head: %d)\n", pushResp.Applied, remote.Name, pushResp.ServerHead)
+			fmt.Printf("Sent %d operations to %s (server head: %d)\n", totalApplied, remote.Name, serverHead)
 			return nil
 		},
 	}
+}
+
+func configuredSendBatchSize() int {
+	if raw := os.Getenv("LOOM_SEND_BATCH_SIZE"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultSendBatchSize
 }

@@ -110,3 +110,18 @@ func TestObjectStore_ReadNotFound(t *testing.T) {
 		t.Error("expected error for missing object")
 	}
 }
+
+func TestObjectStore_ReadRejectsInvalidHashLength(t *testing.T) {
+	store := newTestStore(t)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Read should return an error, not panic: %v", r)
+		}
+	}()
+
+	_, err := store.Read("short")
+	if err == nil {
+		t.Fatal("expected invalid hash length error")
+	}
+}

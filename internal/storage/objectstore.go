@@ -97,6 +97,9 @@ func (s *ObjectStore) Write(content []byte, contentType string) (string, error) 
 
 // Read retrieves content by hash.
 func (s *ObjectStore) Read(hash string) ([]byte, error) {
+	if err := ValidateHash(hash); err != nil {
+		return nil, err
+	}
 	objPath := s.objectPath(hash)
 	data, err := os.ReadFile(objPath)
 	if err != nil {
@@ -127,12 +130,18 @@ func (s *ObjectStore) Read(hash string) ([]byte, error) {
 
 // Exists checks if an object exists in the store.
 func (s *ObjectStore) Exists(hash string) bool {
+	if err := ValidateHash(hash); err != nil {
+		return false
+	}
 	_, err := os.Stat(s.objectPath(hash))
 	return err == nil
 }
 
 // IsCompressed returns whether an object is stored compressed.
 func (s *ObjectStore) IsCompressed(hash string) bool {
+	if err := ValidateHash(hash); err != nil {
+		return false
+	}
 	var compressed int
 	err := s.db.QueryRow("SELECT compressed FROM objects WHERE hash = ?", hash).Scan(&compressed)
 	if err != nil {

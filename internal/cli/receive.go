@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/constructspace/loom/internal/core"
+	"github.com/constructspace/loom/internal/storage"
 	lsync "github.com/constructspace/loom/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -44,9 +45,11 @@ func newReceiveCmd() *cobra.Command {
 			}
 
 			// Negotiate
-			localHead, err := v.OpReader.Head()
+			localHead := stream.HeadSeq
+
+			pullSeq, err := remotes.GetStreamPullSeq(remote.Name, stream.ID)
 			if err != nil {
-				return fmt.Errorf("read local head: %w", err)
+				return fmt.Errorf("read stream pull seq: %w", err)
 			}
 
 			fmt.Printf("Negotiating with %s...\n", remote.Name)
@@ -70,9 +73,11 @@ func newReceiveCmd() *cobra.Command {
 			}
 
 			// Determine pull range
-			fromSeq := remote.PullSeq
-			if commonSeq, ok := negResp.CommonSeqs[stream.ID]; ok && commonSeq > fromSeq {
-				fromSeq = commonSeq
+			fromSeq := pullSeq
+			if fromSeq == 0 {
+				if commonSeq, ok := negResp.CommonSeqs[stream.ID]; ok && commonSeq > fromSeq {
+					fromSeq = commonSeq
+				}
 			}
 
 			// Pull
@@ -93,9 +98,19 @@ func newReceiveCmd() *cobra.Command {
 
 			// Store received objects
 			for _, obj := range pullResp.Objects {
+				if err := storage.ValidateHash(obj.Hash); err != nil {
+					return fmt.Errorf("invalid object hash %q: %w", obj.Hash, err)
+				}
+				if storage.HashContent(obj.Content) != obj.Hash {
+					return fmt.Errorf("hash mismatch for object %s", obj.Hash[:12])
+				}
 				if !v.Store.Exists(obj.Hash) {
-					if _, err := v.Store.Write(obj.Content, ""); err != nil {
+					storedHash, err := v.Store.Write(obj.Content, "")
+					if err != nil {
 						return fmt.Errorf("store object %s: %w", obj.Hash[:12], err)
+					}
+					if storedHash != obj.Hash {
+						return fmt.Errorf("hash mismatch for object %s", obj.Hash[:12])
 					}
 				}
 			}
@@ -126,24 +141,17 @@ func newReceiveCmd() *cobra.Command {
 				}
 			}
 
-			// Write operations locally using WriteBatch
-			written, err := v.OpWriter.WriteBatch(coreOps)
+			// Write operations locally preserving remote IDs and sequence numbers.
+			written, err := v.OpWriter.ImportBatch(coreOps)
 			if err != nil {
 				return fmt.Errorf("write operations: %w", err)
 			}
 
-			// Update pull_seq
-			var maxSeq int64
-			for _, op := range written {
-				if op.Seq > maxSeq {
-					maxSeq = op.Seq
-				}
-			}
-			if err := remotes.UpdatePullSeq(remote.Name, maxSeq); err != nil {
+			if err := remotes.UpdateStreamPullSeq(remote.Name, stream.ID, pullResp.ServerHead); err != nil {
 				return fmt.Errorf("update pull seq: %w", err)
 			}
 
-			fmt.Printf("Received %d operations from %s (head: %d)\n", len(written), remote.Name, maxSeq)
+			fmt.Printf("Received %d operations from %s (head: %d)\n", len(written), remote.Name, pullResp.ServerHead)
 			return nil
 		},
 	}

@@ -3,6 +3,7 @@ package core
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -16,6 +17,8 @@ type OpWriter struct {
 	mu    sync.Mutex
 }
 
+var ErrStreamMissing = errors.New("stream not found")
+
 // NewOpWriter creates a new operation writer.
 func NewOpWriter(db *sql.DB, store *storage.ObjectStore) *OpWriter {
 	return &OpWriter{db: db, store: store}
@@ -26,7 +29,18 @@ func (w *OpWriter) Write(op Operation) (Operation, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	seq, err := storage.NextSeq(w.db)
+	tx, err := w.db.Begin()
+	if err != nil {
+		return op, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var seq int64
+	err = tx.QueryRow(`
+		UPDATE metadata SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+		WHERE key = 'seq_counter'
+		RETURNING CAST(value AS INTEGER)
+	`).Scan(&seq)
 	if err != nil {
 		return op, fmt.Errorf("get next seq: %w", err)
 	}
@@ -38,12 +52,6 @@ func (w *OpWriter) Write(op Operation) (Operation, error) {
 	}
 
 	metaJSON := MarshalJSON(op.Meta)
-
-	tx, err := w.db.Begin()
-	if err != nil {
-		return op, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
 
 	_, err = tx.Exec(`
 		INSERT INTO operations (id, seq, stream_id, space_id, entity_id, type, path, delta, object_ref, parent_seq, author, timestamp, meta)
@@ -57,9 +65,12 @@ func (w *OpWriter) Write(op Operation) (Operation, error) {
 	}
 
 	// Update stream head
-	_, err = tx.Exec("UPDATE streams SET head_seq = ?, updated_at = ? WHERE id = ?",
+	result, err := tx.Exec("UPDATE streams SET head_seq = ?, updated_at = ? WHERE id = ?",
 		op.Seq, op.Timestamp, op.StreamID)
 	if err != nil {
+		return op, fmt.Errorf("update stream head: %w", err)
+	}
+	if err := requireUpdatedStream(result, op.StreamID); err != nil {
 		return op, fmt.Errorf("update stream head: %w", err)
 	}
 
@@ -133,8 +144,14 @@ func (w *OpWriter) WriteBatch(ops []Operation) ([]Operation, error) {
 		}
 
 		// Update stream head
-		tx.Exec("UPDATE streams SET head_seq = ?, updated_at = ? WHERE id = ?",
+		result, err := tx.Exec("UPDATE streams SET head_seq = ?, updated_at = ? WHERE id = ?",
 			ops[i].Seq, ops[i].Timestamp, ops[i].StreamID)
+		if err != nil {
+			return nil, fmt.Errorf("update stream head %d: %w", i, err)
+		}
+		if err := requireUpdatedStream(result, ops[i].StreamID); err != nil {
+			return nil, fmt.Errorf("update stream head %d: %w", i, err)
+		}
 
 		// Upsert entity state
 		entityStatus := "active"
@@ -159,6 +176,100 @@ func (w *OpWriter) WriteBatch(ops []Operation) ([]Operation, error) {
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit batch: %w", err)
+	}
+
+	return ops, nil
+}
+
+// ImportBatch writes remote operations using their existing IDs and sequence numbers.
+func (w *OpWriter) ImportBatch(ops []Operation) ([]Operation, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	tx, err := w.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var maxSeq int64
+
+	for i := range ops {
+		if ops[i].ID == "" {
+			return nil, fmt.Errorf("import operation %d: missing id", i)
+		}
+		if ops[i].Seq <= 0 {
+			return nil, fmt.Errorf("import operation %d: invalid seq %d", i, ops[i].Seq)
+		}
+		if ops[i].Timestamp == "" {
+			ops[i].Timestamp = Now()
+		}
+
+		metaJSON := MarshalJSON(ops[i].Meta)
+
+		_, err = tx.Exec(`
+			INSERT INTO operations (id, seq, stream_id, space_id, entity_id, type, path, delta, object_ref, parent_seq, author, timestamp, meta)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			ops[i].ID, ops[i].Seq, ops[i].StreamID, ops[i].SpaceID, ops[i].EntityID,
+			string(ops[i].Type), ops[i].Path, ops[i].Delta, ops[i].ObjectRef, ops[i].ParentSeq,
+			ops[i].Author, ops[i].Timestamp, metaJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("import operation %d: %w", i, err)
+		}
+
+		result, err := tx.Exec(`
+			UPDATE streams
+			SET head_seq = CASE WHEN head_seq < ? THEN ? ELSE head_seq END,
+			    updated_at = CASE WHEN head_seq < ? THEN ? ELSE updated_at END
+			WHERE id = ?`,
+			ops[i].Seq, ops[i].Seq, ops[i].Seq, ops[i].Timestamp, ops[i].StreamID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("update stream head %d: %w", i, err)
+		}
+		if err := requireUpdatedStream(result, ops[i].StreamID); err != nil {
+			return nil, fmt.Errorf("update stream head %d: %w", i, err)
+		}
+
+		entityStatus := "active"
+		if ops[i].Type == OpDelete {
+			entityStatus = "deleted"
+		}
+		_, err = tx.Exec(`
+			INSERT INTO entities (id, space_id, path, kind, object_ref, size, mod_time, status)
+			VALUES (?, ?, ?, 'file', ?, ?, ?, ?)
+			ON CONFLICT(id, space_id) DO UPDATE SET
+				path = excluded.path,
+				object_ref = COALESCE(excluded.object_ref, entities.object_ref),
+				size = COALESCE(excluded.size, entities.size),
+				mod_time = excluded.mod_time,
+				status = excluded.status,
+				updated_at = datetime('now')`,
+			ops[i].EntityID, ops[i].SpaceID, ops[i].Path, ops[i].ObjectRef, ops[i].Meta.Size, ops[i].Timestamp, entityStatus)
+		if err != nil {
+			return nil, fmt.Errorf("upsert entity %d: %w", i, err)
+		}
+
+		if ops[i].Seq > maxSeq {
+			maxSeq = ops[i].Seq
+		}
+	}
+
+	if maxSeq > 0 {
+		_, err = tx.Exec(`
+			UPDATE metadata
+			SET value = CAST(MAX(CAST(value AS INTEGER), ?) AS TEXT)
+			WHERE key = 'seq_counter'`,
+			maxSeq,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("advance seq counter: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit import: %w", err)
 	}
 
 	return ops, nil
@@ -274,6 +385,17 @@ func (r *OpReader) CountBySpace(streamID string, sinceSeq int64) (map[string]*Sp
 		}
 	}
 	return result, nil
+}
+
+func requireUpdatedStream(result sql.Result, streamID string) error {
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: %s", ErrStreamMissing, streamID)
+	}
+	return nil
 }
 
 func scanOperations(rows *sql.Rows) ([]Operation, error) {

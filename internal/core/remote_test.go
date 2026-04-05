@@ -177,3 +177,52 @@ func TestRemoteNoRemotes(t *testing.T) {
 	}
 }
 
+func TestRemoteStreamSeqsAreScopedPerStream(t *testing.T) {
+	store := setupTestDB(t)
+
+	if err := store.Add("origin", "https://hub.example.com/a/b", true); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.UpdateStreamPushSeq("origin", "stream-main", 12); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateStreamPullSeq("origin", "stream-main", 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateStreamPushSeq("origin", "stream-feature", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	pushMain, err := store.GetStreamPushSeq("origin", "stream-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushMain != 12 {
+		t.Fatalf("expected stream-main push seq 12, got %d", pushMain)
+	}
+
+	pullMain, err := store.GetStreamPullSeq("origin", "stream-main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pullMain != 7 {
+		t.Fatalf("expected stream-main pull seq 7, got %d", pullMain)
+	}
+
+	pushFeature, err := store.GetStreamPushSeq("origin", "stream-feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushFeature != 3 {
+		t.Fatalf("expected stream-feature push seq 3, got %d", pushFeature)
+	}
+
+	pullFeature, err := store.GetStreamPullSeq("origin", "stream-feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pullFeature != 0 {
+		t.Fatalf("expected stream-feature pull seq 0, got %d", pullFeature)
+	}
+}

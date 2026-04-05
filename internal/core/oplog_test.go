@@ -250,6 +250,80 @@ func TestOpWriter_WriteBatch_UpdatesEntities(t *testing.T) {
 	}
 }
 
+func TestOpWriter_ImportBatchPreservesRemoteIdentity(t *testing.T) {
+	writer, reader, stream := setupTestEnv(t)
+
+	imported, err := writer.ImportBatch([]Operation{
+		{
+			ID:        "remote-op-10",
+			Seq:       10,
+			StreamID:  stream.ID,
+			SpaceID:   "code",
+			EntityID:  "remote.go",
+			Type:      OpCreate,
+			Path:      "remote.go",
+			Author:    "remote-user",
+			Timestamp: "2026-04-04T03:00:00Z",
+			Meta:      OpMeta{Size: 42},
+		},
+	})
+	if err != nil {
+		t.Fatalf("import batch: %v", err)
+	}
+
+	if imported[0].ID != "remote-op-10" {
+		t.Fatalf("expected imported id to be preserved, got %q", imported[0].ID)
+	}
+	if imported[0].Seq != 10 {
+		t.Fatalf("expected imported seq 10, got %d", imported[0].Seq)
+	}
+
+	head, err := reader.Head()
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	if head != 10 {
+		t.Fatalf("expected head to advance to imported seq 10, got %d", head)
+	}
+
+	var storedSeq int64
+	err = writer.db.QueryRow("SELECT seq FROM operations WHERE id = 'remote-op-10'").Scan(&storedSeq)
+	if err != nil {
+		t.Fatalf("query imported operation: %v", err)
+	}
+	if storedSeq != 10 {
+		t.Fatalf("expected stored seq 10, got %d", storedSeq)
+	}
+
+	var streamHead int64
+	err = writer.db.QueryRow("SELECT head_seq FROM streams WHERE id = ?", stream.ID).Scan(&streamHead)
+	if err != nil {
+		t.Fatalf("query stream head: %v", err)
+	}
+	if streamHead != 10 {
+		t.Fatalf("expected stream head 10, got %d", streamHead)
+	}
+}
+
+func TestOpWriter_ImportBatchRejectsMissingIdentity(t *testing.T) {
+	writer, _, stream := setupTestEnv(t)
+
+	_, err := writer.ImportBatch([]Operation{
+		{
+			Seq:      4,
+			StreamID: stream.ID,
+			SpaceID:  "code",
+			EntityID: "remote.go",
+			Type:     OpCreate,
+			Path:     "remote.go",
+			Author:   "remote-user",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected import batch to reject missing id")
+	}
+}
+
 func TestOpReader_CountBySpace_TypeBreakdown(t *testing.T) {
 	writer, reader, stream := setupTestEnv(t)
 

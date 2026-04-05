@@ -177,3 +177,52 @@ func (s *RemoteStore) GetAuthToken(remoteName string) (string, error) {
 	}
 	return token, nil
 }
+
+func streamSyncKey(direction, remoteName, streamID string) string {
+	return fmt.Sprintf("sync_%s_seq:%s:%s", direction, remoteName, streamID)
+}
+
+func (s *RemoteStore) getStreamSeq(direction, remoteName, streamID string) (int64, error) {
+	var seq int64
+	key := streamSyncKey(direction, remoteName, streamID)
+	err := s.db.QueryRow("SELECT CAST(value AS INTEGER) FROM metadata WHERE key = ?", key).Scan(&seq)
+	if err == nil {
+		return seq, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, err
+	}
+	return 0, nil
+}
+
+func (s *RemoteStore) GetStreamPushSeq(remoteName, streamID string) (int64, error) {
+	return s.getStreamSeq("push", remoteName, streamID)
+}
+
+func (s *RemoteStore) GetStreamPullSeq(remoteName, streamID string) (int64, error) {
+	return s.getStreamSeq("pull", remoteName, streamID)
+}
+
+func (s *RemoteStore) setStreamSeq(direction, remoteName, streamID string, seq int64) error {
+	key := streamSyncKey(direction, remoteName, streamID)
+	_, err := s.db.Exec(
+		"INSERT INTO metadata (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		key, fmt.Sprintf("%d", seq),
+	)
+	if err != nil {
+		return err
+	}
+
+	if direction == "push" {
+		return s.UpdatePushSeq(remoteName, seq)
+	}
+	return s.UpdatePullSeq(remoteName, seq)
+}
+
+func (s *RemoteStore) UpdateStreamPushSeq(remoteName, streamID string, seq int64) error {
+	return s.setStreamSeq("push", remoteName, streamID, seq)
+}
+
+func (s *RemoteStore) UpdateStreamPullSeq(remoteName, streamID string, seq int64) error {
+	return s.setStreamSeq("pull", remoteName, streamID, seq)
+}
