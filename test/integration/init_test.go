@@ -150,10 +150,10 @@ func TestCLI_LogSearchRespectsLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	defer vault.Close()
 
 	stream, err := vault.ActiveStream()
 	if err != nil {
+		vault.Close()
 		t.Fatalf("active stream: %v", err)
 	}
 
@@ -165,6 +165,7 @@ func TestCLI_LogSearchRespectsLimit(t *testing.T) {
 			Author:   "test",
 			Source:   core.SourceManual,
 		}); err != nil {
+			vault.Close()
 			t.Fatalf("checkpoint %d: %v", i, err)
 		}
 		if _, err := vault.OpWriter.Write(core.Operation{
@@ -175,9 +176,13 @@ func TestCLI_LogSearchRespectsLimit(t *testing.T) {
 			Path:     "file.txt",
 			Author:   "test",
 		}); err != nil {
+			vault.Close()
 			t.Fatalf("write op %d: %v", i, err)
 		}
 	}
+
+	// Release lock before CLI opens the vault
+	vault.Close()
 
 	out := runCLI(t, "-p", dir, "log", "--search", "searchable", "-n", "2")
 	if strings.Count(out, "searchable checkpoint") != 2 {

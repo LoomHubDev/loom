@@ -28,8 +28,9 @@ func TestDoctor_HealthyVault(t *testing.T) {
 	projectDir = dir
 	t.Cleanup(func() { projectDir = "." })
 
-	_, err := core.InitVault(dir)
+	v, err := core.InitVault(dir)
 	require.NoError(t, err)
+	require.NoError(t, v.Close())
 
 	out := runCmd(t, "--project", dir, "doctor")
 	if !strings.Contains(out, "All checks passed") {

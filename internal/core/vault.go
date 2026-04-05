@@ -45,6 +45,7 @@ type Vault struct {
 	OpWriter    *OpWriter
 	OpReader    *OpReader
 	Checkpoints *CheckpointEngine
+	lock        *VaultLock
 }
 
 // InitVault initializes a new Loom project at the given path.
@@ -163,6 +164,14 @@ func InitVault(projectPath string, opts ...InitOption) (*Vault, error) {
 		return nil, fmt.Errorf("set active stream: %w", err)
 	}
 
+	// Acquire vault lock
+	lock, err := AcquireLock(loomPath)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("acquire lock: %w", err)
+	}
+	v.lock = lock
+
 	// Scan and record initial entities
 	entityCount := v.scanEntities(stream)
 	_ = entityCount
@@ -204,6 +213,12 @@ func OpenVault(projectPath string) (*Vault, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
+	lock, err := AcquireLock(loomPath)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("acquire lock: %w", err)
+	}
+
 	v := &Vault{
 		ProjectPath: filepath.Dir(loomPath),
 		LoomPath:    loomPath,
@@ -213,6 +228,7 @@ func OpenVault(projectPath string) (*Vault, error) {
 		Streams:     NewStreamManager(db),
 		OpWriter:    NewOpWriter(db, store),
 		OpReader:    NewOpReader(db),
+		lock:        lock,
 	}
 	v.Checkpoints = NewCheckpointEngine(db, v.OpReader)
 
@@ -221,6 +237,9 @@ func OpenVault(projectPath string) (*Vault, error) {
 
 // Close releases all resources.
 func (v *Vault) Close() error {
+	if v.lock != nil {
+		v.lock.Release()
+	}
 	if v.DB != nil {
 		return v.DB.Close()
 	}

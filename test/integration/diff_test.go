@@ -20,10 +20,10 @@ func TestCLI_DiffShowsChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init vault: %v", err)
 	}
-	defer vault.Close()
 
 	stream, err := vault.ActiveStream()
 	if err != nil {
+		vault.Close()
 		t.Fatalf("active stream: %v", err)
 	}
 
@@ -34,12 +34,14 @@ func TestCLI_DiffShowsChanges(t *testing.T) {
 		Source:   core.SourceManual,
 	})
 	if err != nil {
+		vault.Close()
 		t.Fatalf("create checkpoint: %v", err)
 	}
 
 	newContent := []byte("package main\n\nfunc main() { println(\"hello\") }\n")
 	hash, err := vault.Store.Write(newContent, "text/plain")
 	if err != nil {
+		vault.Close()
 		t.Fatalf("store write: %v", err)
 	}
 	os.WriteFile(filepath.Join(dir, "main.go"), newContent, 0644)
@@ -53,8 +55,12 @@ func TestCLI_DiffShowsChanges(t *testing.T) {
 		Author:    "test",
 	})
 	if err != nil {
+		vault.Close()
 		t.Fatalf("write op: %v", err)
 	}
+
+	// Release lock before CLI opens the vault
+	vault.Close()
 
 	out := runCLI(t, "-p", dir, "diff")
 	if !strings.Contains(out, "main.go") {
@@ -72,10 +78,10 @@ func TestCLI_DiffBetweenCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init vault: %v", err)
 	}
-	defer vault.Close()
 
 	stream, err := vault.ActiveStream()
 	if err != nil {
+		vault.Close()
 		t.Fatalf("active stream: %v", err)
 	}
 
@@ -86,12 +92,14 @@ func TestCLI_DiffBetweenCheckpoints(t *testing.T) {
 		Source:   core.SourceManual,
 	})
 	if err != nil {
+		vault.Close()
 		t.Fatalf("create checkpoint v1: %v", err)
 	}
 
 	newContent := []byte("package main\n\nfunc main() { println(\"hello\") }\n")
 	hash, err := vault.Store.Write(newContent, "text/plain")
 	if err != nil {
+		vault.Close()
 		t.Fatalf("store write: %v", err)
 	}
 	os.WriteFile(filepath.Join(dir, "main.go"), newContent, 0644)
@@ -105,6 +113,7 @@ func TestCLI_DiffBetweenCheckpoints(t *testing.T) {
 		Author:    "test",
 	})
 	if err != nil {
+		vault.Close()
 		t.Fatalf("write op: %v", err)
 	}
 
@@ -115,8 +124,12 @@ func TestCLI_DiffBetweenCheckpoints(t *testing.T) {
 		Source:   core.SourceManual,
 	})
 	if err != nil {
+		vault.Close()
 		t.Fatalf("create checkpoint v2: %v", err)
 	}
+
+	// Release lock before CLI opens the vault
+	vault.Close()
 
 	out := runCLI(t, "-p", dir, "diff", cp1.ID, cp2.ID)
 	if !strings.Contains(out, "main.go") {
@@ -134,10 +147,10 @@ func TestCLI_DiffJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init vault: %v", err)
 	}
-	defer vault.Close()
 
 	stream, err := vault.ActiveStream()
 	if err != nil {
+		vault.Close()
 		t.Fatalf("active stream: %v", err)
 	}
 
@@ -148,12 +161,14 @@ func TestCLI_DiffJSON(t *testing.T) {
 		Source:   core.SourceManual,
 	})
 	if err != nil {
+		vault.Close()
 		t.Fatalf("create checkpoint: %v", err)
 	}
 
 	newContent := []byte("package main\n\nfunc main() { println(\"hello\") }\n")
 	hash, err := vault.Store.Write(newContent, "text/plain")
 	if err != nil {
+		vault.Close()
 		t.Fatalf("store write: %v", err)
 	}
 	os.WriteFile(filepath.Join(dir, "main.go"), newContent, 0644)
@@ -167,8 +182,12 @@ func TestCLI_DiffJSON(t *testing.T) {
 		Author:    "test",
 	})
 	if err != nil {
+		vault.Close()
 		t.Fatalf("write op: %v", err)
 	}
+
+	// Release lock before CLI opens the vault
+	vault.Close()
 
 	out := runCLI(t, "-p", dir, "diff", "--format", "json")
 	var result interface{}
@@ -186,10 +205,10 @@ func TestCLI_ShowCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init vault: %v", err)
 	}
-	defer vault.Close()
 
 	stream, err := vault.ActiveStream()
 	if err != nil {
+		vault.Close()
 		t.Fatalf("active stream: %v", err)
 	}
 
@@ -200,8 +219,12 @@ func TestCLI_ShowCheckpoint(t *testing.T) {
 		Source:   core.SourceManual,
 	})
 	if err != nil {
+		vault.Close()
 		t.Fatalf("create checkpoint: %v", err)
 	}
+
+	// Release lock before CLI opens the vault
+	vault.Close()
 
 	out := runCLI(t, "-p", dir, "show", cp.ID)
 
