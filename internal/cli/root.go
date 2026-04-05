@@ -22,10 +22,12 @@ func NewRootCmd() *cobra.Command {
 		newStatusCmd(),
 		newCheckpointCmd(),
 		newLogCmd(),
+		newWeaveCmd(),
 		newStreamCmd(),
 		newHubCmd(),
 		newSendCmd(),
 		newReceiveCmd(),
+		newWatchCmd(),
 	)
 
 	return rootCmd
