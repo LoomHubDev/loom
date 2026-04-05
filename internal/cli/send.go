@@ -63,6 +63,13 @@ func newSendCmd() *cobra.Command {
 				return nil
 			}
 
+			// Pre-push hook
+			if err := v.Hooks.Run(core.HookPrePush, map[string]string{
+				"LOOM_REMOTE": remote.Name,
+			}); err != nil {
+				return fmt.Errorf("pre-push hook failed: %w", err)
+			}
+
 			// Negotiate with hub
 			fmt.Printf("Negotiating with %s...\n", remote.Name)
 			negResp, err := client.Negotiate(&lsync.NegotiateRequest{
@@ -192,6 +199,11 @@ func newSendCmd() *cobra.Command {
 			if err := remotes.UpdateStreamPushSeq(remote.Name, stream.ID, localHead); err != nil {
 				return fmt.Errorf("update push seq: %w", err)
 			}
+
+			// Post-push hook (non-blocking)
+			_ = v.Hooks.Run(core.HookPostPush, map[string]string{
+				"LOOM_REMOTE": remote.Name,
+			})
 
 			fmt.Printf("Sent %d operations to %s (server head: %d)\n", totalApplied, remote.Name, serverHead)
 			return nil

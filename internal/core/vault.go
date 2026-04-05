@@ -45,6 +45,7 @@ type Vault struct {
 	OpWriter    *OpWriter
 	OpReader    *OpReader
 	Checkpoints *CheckpointEngine
+	Hooks       *HookRunner
 	lock        *VaultLock
 }
 
@@ -150,6 +151,7 @@ func InitVault(projectPath string, opts ...InitOption) (*Vault, error) {
 		Streams:     NewStreamManager(db),
 		OpWriter:    NewOpWriter(db, store),
 		OpReader:    NewOpReader(db),
+		Hooks:       NewHookRunner(loomPath),
 	}
 	v.Checkpoints = NewCheckpointEngine(db, v.OpReader)
 
@@ -228,6 +230,7 @@ func OpenVault(projectPath string) (*Vault, error) {
 		Streams:     NewStreamManager(db),
 		OpWriter:    NewOpWriter(db, store),
 		OpReader:    NewOpReader(db),
+		Hooks:       NewHookRunner(loomPath),
 		lock:        lock,
 	}
 	v.Checkpoints = NewCheckpointEngine(db, v.OpReader)

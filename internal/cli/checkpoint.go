@@ -32,6 +32,14 @@ func newCheckpointCmd() *cobra.Command {
 
 			title := strings.Join(args, " ")
 
+			// Pre-checkpoint hook
+			if err := vault.Hooks.Run(core.HookPreCheckpoint, map[string]string{
+				"LOOM_TITLE":  title,
+				"LOOM_STREAM": stream.Name,
+			}); err != nil {
+				return fmt.Errorf("pre-checkpoint hook failed: %w", err)
+			}
+
 			// Parse tags
 			tagMap := make(map[string]string)
 			for _, t := range tags {
@@ -52,6 +60,11 @@ func newCheckpointCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			// Post-checkpoint hook (non-blocking)
+			_ = vault.Hooks.Run(core.HookPostCheckpoint, map[string]string{
+				"LOOM_CHECKPOINT_ID": cp.ID,
+			})
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Checkpoint created: %s\n", cp.ID[:10])
 			fmt.Fprintf(cmd.OutOrStdout(), "  Title: %s\n", cp.Title)

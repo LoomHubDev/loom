@@ -72,6 +72,13 @@ func newReceiveCmd() *cobra.Command {
 				return nil
 			}
 
+			// Pre-pull hook
+			if err := v.Hooks.Run(core.HookPrePull, map[string]string{
+				"LOOM_REMOTE": remote.Name,
+			}); err != nil {
+				return fmt.Errorf("pre-pull hook failed: %w", err)
+			}
+
 			// Determine pull range
 			fromSeq := pullSeq
 			if fromSeq == 0 {
@@ -150,6 +157,11 @@ func newReceiveCmd() *cobra.Command {
 			if err := remotes.UpdateStreamPullSeq(remote.Name, stream.ID, pullResp.ServerHead); err != nil {
 				return fmt.Errorf("update pull seq: %w", err)
 			}
+
+			// Post-pull hook (non-blocking)
+			_ = v.Hooks.Run(core.HookPostPull, map[string]string{
+				"LOOM_REMOTE": remote.Name,
+			})
 
 			fmt.Printf("Received %d operations from %s (head: %d)\n", len(written), remote.Name, pullResp.ServerHead)
 			return nil

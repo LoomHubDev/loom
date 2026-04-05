@@ -24,6 +24,13 @@ func newRestoreCmd() *cobra.Command {
 			}
 			defer vault.Close()
 
+			// Pre-restore hook
+			if err := vault.Hooks.Run(core.HookPreRestore, map[string]string{
+				"LOOM_CHECKPOINT_ID": args[0],
+			}); err != nil {
+				return fmt.Errorf("pre-restore hook failed: %w", err)
+			}
+
 			engine := core.NewRestoreEngine(vault)
 
 			scope := core.RestoreScope{
@@ -38,6 +45,11 @@ func newRestoreCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("restore: %w", err)
 			}
+
+			// Post-restore hook (non-blocking)
+			_ = vault.Hooks.Run(core.HookPostRestore, map[string]string{
+				"LOOM_CHECKPOINT_ID": result.ID,
+			})
 
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "restored to checkpoint  %s\n", args[0])
