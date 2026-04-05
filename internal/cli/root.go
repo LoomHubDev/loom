@@ -28,6 +28,9 @@ func NewRootCmd() *cobra.Command {
 		newSendCmd(),
 		newReceiveCmd(),
 		newWatchCmd(),
+		newDiffCmd(),
+		newShowCmd(),
+		newRestoreCmd(),
 	)
 
 	return rootCmd
