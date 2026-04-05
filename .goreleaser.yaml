@@ -37,6 +37,18 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+brews:
+  - ids: [loom]
+    repository:
+      owner: LoomHubDev
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://loomhub.dev"
+    description: "Continuous, intelligent, multi-space versioning system"
+    license: "MIT"
+    install: |
+      bin.install "loom"
+
 changelog:
   sort: asc
   filters:

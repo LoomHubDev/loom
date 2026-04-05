@@ -205,6 +205,12 @@ func (e *DiffEngine) buildEntityDiff(entityID string, ops []core.Operation, from
 
 	// Only compute text diff if we have content to compare.
 	if oldContent != nil || newContent != nil {
+		// Check if either side looks binary.
+		if isBinary(oldContent) || isBinary(newContent) {
+			ed.Summary = fmt.Sprintf("Binary file changed (%d bytes -> %d bytes)", len(oldContent), len(newContent))
+			// Leave Hunks empty for binary files.
+			return ed, nil
+		}
 		contextLines := opts.Context
 		if contextLines <= 0 {
 			contextLines = 3
@@ -213,6 +219,20 @@ func (e *DiffEngine) buildEntityDiff(entityID string, ops []core.Operation, from
 	}
 
 	return ed, nil
+}
+
+// isBinary reports whether content appears to be binary by checking for null bytes in the first 512 bytes.
+func isBinary(content []byte) bool {
+	check := content
+	if len(check) > 512 {
+		check = check[:512]
+	}
+	for _, b := range check {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // getEntityObjectRef returns the ObjectRef for an entity at or before the given seq.

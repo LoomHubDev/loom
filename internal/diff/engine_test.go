@@ -310,6 +310,62 @@ func TestDiffEngine_SummaryOnly(t *testing.T) {
 	assert.Empty(t, result.Spaces[0].Entities[0].Hunks)
 }
 
+func TestDiffEngine_BinaryDiff(t *testing.T) {
+	engine, writer, _, stream := setupDiffEnv(t)
+
+	// Store binary content (contains null bytes).
+	oldBinary := []byte("PNG\x00\x00\x00\x0dIHDRold")
+	hash1, err := engine.store.Write(oldBinary, "application/octet-stream")
+	require.NoError(t, err)
+
+	_, err = writer.Write(core.Operation{
+		StreamID:  stream.ID,
+		SpaceID:   "assets",
+		EntityID:  "img1",
+		Type:      core.OpCreate,
+		Path:      "assets/logo.png",
+		ObjectRef: hash1,
+		Author:    "test",
+	})
+	require.NoError(t, err)
+
+	fromSeq, err := engine.reader.Head()
+	require.NoError(t, err)
+
+	// Write modified binary content.
+	newBinary := []byte("PNG\x00\x00\x00\x0dIHDRnewnewnew")
+	hash2, err := engine.store.Write(newBinary, "application/octet-stream")
+	require.NoError(t, err)
+
+	_, err = writer.Write(core.Operation{
+		StreamID:  stream.ID,
+		SpaceID:   "assets",
+		EntityID:  "img1",
+		Type:      core.OpModify,
+		Path:      "assets/logo.png",
+		ObjectRef: hash2,
+		Author:    "test",
+	})
+	require.NoError(t, err)
+
+	result, err := engine.Diff(
+		ParseRef(fmt.Sprintf("%d", fromSeq)),
+		ParseRef("HEAD"),
+		DiffOptions{},
+	)
+	require.NoError(t, err)
+
+	require.Len(t, result.Spaces, 1)
+	require.Len(t, result.Spaces[0].Entities, 1)
+
+	entity := result.Spaces[0].Entities[0]
+	assert.Equal(t, core.ChangeModified, entity.Change)
+	// Binary files should have a summary but no hunks.
+	assert.NotEmpty(t, entity.Summary, "binary diff should have a summary")
+	assert.Contains(t, entity.Summary, "Binary file changed")
+	assert.Empty(t, entity.Hunks, "binary diff should have no hunks")
+}
+
 func TestFormatTerminal_BasicOutput(t *testing.T) {
 	result := &DiffResult{
 		FromSeq: 0,

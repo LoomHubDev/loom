@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 
@@ -15,12 +16,27 @@ import (
 func newWatchCmd() *cobra.Command {
 	var debounceMs int
 	var noAutoCheckpoint bool
+	var daemon bool
 
 	cmd := &cobra.Command{
 		Use:   "watch",
 		Short: "Watch for file changes and auto-version",
 		Long:  "Start a file watcher that automatically records operations for every file change.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Daemon mode: re-launch as a background process.
+			if daemon && os.Getenv("LOOM_WATCH_DAEMON") != "1" {
+				filteredArgs := filterArg(os.Args[1:], "--daemon")
+				child := exec.Command(os.Args[0], filteredArgs...)
+				child.Env = append(os.Environ(), "LOOM_WATCH_DAEMON=1")
+				child.Stdout = nil
+				child.Stderr = nil
+				if err := child.Start(); err != nil {
+					return fmt.Errorf("start daemon: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Watcher daemon started (PID %d)\n", child.Process.Pid)
+				return nil
+			}
+
 			vault, err := core.OpenVault(projectDir)
 			if err != nil {
 				return err
@@ -67,6 +83,18 @@ func newWatchCmd() *cobra.Command {
 
 	cmd.Flags().IntVar(&debounceMs, "debounce", 0, "Debounce window in milliseconds (default: from config)")
 	cmd.Flags().BoolVar(&noAutoCheckpoint, "no-auto-checkpoint", false, "Disable auto-checkpointing")
+	cmd.Flags().BoolVar(&daemon, "daemon", false, "Run in background")
 
 	return cmd
+}
+
+// filterArg returns args with the given flag removed.
+func filterArg(args []string, flag string) []string {
+	var filtered []string
+	for _, a := range args {
+		if a != flag {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
 }
